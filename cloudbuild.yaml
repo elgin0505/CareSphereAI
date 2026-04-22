@@ -1,0 +1,58 @@
+# Regional Cloud Build trigger (asia-southeast1) for CareSphere AI backend.
+# Builds the Docker image, pushes to Artifact Registry, deploys to Cloud Run.
+#
+# NOTE: Regional Cloud Build REQUIRES options.logging to be set explicitly.
+# Without this, CreateBuild fails with FAILED_PRECONDITION (gRPC code 9).
+
+steps:
+  # 1. Build the Docker image
+  # Use explicit -f and context path so Cloud Build never looks for Dockerfile
+  # at /workspace/Dockerfile (the repo root) — it always finds backend/Dockerfile.
+  - id: 'build'
+    name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'backend/Dockerfile'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/caresphere-backend:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/caresphere-backend:latest'
+      - 'backend'
+
+  # 2. Push to Container Registry
+  - id: 'push'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/caresphere-backend']
+    waitFor: ['build']
+
+  # 3. Deploy to Cloud Run
+  - id: 'deploy'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'caresphere'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/caresphere-backend:$COMMIT_SHA'
+      - '--region'
+      - 'asia-southeast1'
+      - '--platform'
+      - 'managed'
+      - '--min-instances'
+      - '1'
+      - '--allow-unauthenticated'
+    waitFor: ['push']
+
+images:
+  - 'gcr.io/$PROJECT_ID/caresphere-backend:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/caresphere-backend:latest'
+
+# REQUIRED for regional builds — without this CreateBuild fails with
+# FAILED_PRECONDITION because there's no default logs bucket in the region.
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+
+timeout: '1200s'
