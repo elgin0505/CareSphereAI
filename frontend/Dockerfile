@@ -1,27 +1,34 @@
+# Root-level Dockerfile for Cloud Build trigger (Dockerfile mode).
+# Build context = repo root (/workspace), so all paths use backend/ prefix.
+# The Cloud Build trigger looks for /workspace/Dockerfile — this file.
+
+# --- Build stage ---
 FROM node:20-alpine AS builder
 
 WORKDIR /app
-COPY package*.json ./
+
+# Install all deps (including dev) so tsc can compile
+COPY backend/package.json backend/package-lock.json ./
 RUN npm ci
-COPY . .
 
-ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-
+# Copy source and compile to dist/
+COPY backend/tsconfig.json ./
+COPY backend/src ./src
 RUN npm run build
 
+# --- Runtime stage ---
 FROM node:20-alpine AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=8080
 
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public 2>/dev/null || true
+# Install only production deps
+COPY backend/package.json backend/package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 
-EXPOSE 3000
+# Copy compiled JS from the builder stage
+COPY --from=builder /app/dist ./dist
 
-USER node
-
-CMD ["node", "server.js"]
+EXPOSE 8080
+CMD ["node", "dist/index.js"]
